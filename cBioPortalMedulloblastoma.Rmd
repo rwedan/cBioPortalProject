@@ -1,11 +1,13 @@
 ---
-title: "cBioPortal: Medulloblastoma"
+title: 'cBioPortal: Medulloblastoma'
 author: "Tim Triche, Jr."
 date: "12/8/2021"
 output:
+  pdf_document:
+    toc: yes
   html_document:
-    keep_md: true
-    toc: true
+    keep_md: yes
+    toc: yes
 ---
 
 ```{r setup, include=FALSE}
@@ -212,6 +214,29 @@ muts %>%
   fisher.test(simulate.p.value = TRUE) %>% 
   getElement("p.value")
 
+message("Chi-squared p-value:", appendLF = FALSE)
+muts %>% 
+  tabyl(BAP1, TP53) %>% 
+  chisq.test(simulate.p.value = TRUE) %>% 
+  getElement("p.value")
+
+message("Fisher's exact test p-value:", appendLF = FALSE)
+muts %>% 
+  tabyl(BAP1, TP53) %>% 
+  fisher.test(simulate.p.value = TRUE) %>% 
+  getElement("p.value")
+
+message("Chi-squared p-value:", appendLF = FALSE)
+muts %>% 
+  tabyl(TP53, NF2) %>% 
+  chisq.test(simulate.p.value = TRUE) %>% 
+  getElement("p.value")
+
+message("Fisher's exact test p-value:", appendLF = FALSE)
+muts %>% 
+  tabyl(TP53, NF2) %>% 
+  fisher.test(simulate.p.value = TRUE) %>% 
+  getElement("p.value")
 
 ```
 p = 0.5128434, this is definitely not significant. 
@@ -263,6 +288,31 @@ NYU_muts %>%
 message("Fisher's exact test p-value (NYU):", appendLF = FALSE)
 NYU_muts %>% 
   tabyl(BAP1, NF2) %>% 
+  fisher.test(simulate.p.value = TRUE) %>% 
+  getElement("p.value")
+
+
+message("Chi-squared p-value:", appendLF = FALSE)
+NYU_muts %>% 
+  tabyl(BAP1, TP53) %>% 
+  chisq.test(simulate.p.value = TRUE) %>% 
+  getElement("p.value")
+
+message("Fisher's exact test p-value:", appendLF = FALSE)
+NYU_muts %>% 
+  tabyl(BAP1, TP53) %>% 
+  fisher.test(simulate.p.value = TRUE) %>% 
+  getElement("p.value")
+
+message("Chi-squared p-value:", appendLF = FALSE)
+NYU_muts %>% 
+  tabyl(TP53, NF2) %>% 
+  chisq.test(simulate.p.value = TRUE) %>% 
+  getElement("p.value")
+
+message("Fisher's exact test p-value:", appendLF = FALSE)
+NYU_muts %>% 
+  tabyl(TP53, NF2) %>% 
   fisher.test(simulate.p.value = TRUE) %>% 
   getElement("p.value")
 
@@ -430,12 +480,16 @@ in the original PCGP study and wanted to estimate the odds of seeing it again),
 we'll use the [beta distribution](http://varianceexplained.org/statistics/beta_distribution_and_baseball/) to capture a "noisy" estimate of a proportion.  Specifically, let's
 use the original mutation table to estimate each from the PCGP data. 
 
+
+Low p = TP53 and NF2
+TCGA Study!
+
 ```{r, probabilities}
 
-neither <- nrow(subset(muts, CTNNB1 == 0 & DDX3X == 0))
-CTNNB1 <- nrow(subset(muts, CTNNB1 == 1 & DDX3X == 0))
-DDX3X <- nrow(subset(muts, CTNNB1 == 0 & DDX3X == 1))
-both <- nrow(subset(muts, CTNNB1 == 1 & DDX3X == 1))
+neither <- nrow(subset(muts, TP53 == 0 & NF2 == 0))
+TP53 <- nrow(subset(muts, TP53 == 1 & NF2 == 0))
+NF2 <- nrow(subset(muts, TP53 == 0 & NF2 == 1))
+both <- nrow(subset(muts, TP53 == 1 & NF2 == 1))
 
 ```
 
@@ -459,8 +513,8 @@ and that sensible generator is a beta distribution reflecting our sample size.
 
 ```{r, betas}
 
-a <- CTNNB1
-b <- DDX3X 
+a <- TP53
+b <- NF2
 
 p_one <- function(x) dbeta(x, (a + b), (both + neither))
 p_both <- function(x) dbeta(x, both, (a + b + neither))
@@ -499,8 +553,209 @@ Let's give it a shot.
 
 ```{r, someSims}
 
-a <- CTNNB1
-b <- DDX3X 
+a <- TP53
+b <- NF2 
+
+sim2x2(n=nrow(muts), neither, a, b, both)
+```
+
+That seems to work fine (we could more directly simulate the odds of neither+either and a+b, feel free to implement that instead). If you want an analytical estimate for an asymptotic 
+test (`prop.test`), R also provides that, but beware: it doesn't really take into account 
+sampling variance (i.e. uncertainty about the parameter estimates). Let's do that ourselves.
+
+```{r, wrappers}
+
+# fairly generic 
+simFisher <- function(n, neither, a, b, both) fisher.test(sim2x2(n, neither, a, b, both))
+
+# using the values we've already set up to simulate from: 
+simFetP <- function(n) simFisher(n, neither, a, b, both)$p.value
+
+```
+
+The `replicate` function is quite helpful here. Let's suppose the St. Jude 
+study is representative of medulloblastoma generally. We'll simulate 1000 
+studies of sizes between 10 and 500 to see how often our (true!) difference
+in proportions registers as significant at p < 0.05. 
+
+```{r, sampleSizes}
+
+powerN <- function(n, alpha=0.05) {
+  res <- table(replicate(1000, simFetP(n=n)) < alpha)
+  res["TRUE"] / sum(res)
+}
+
+for (N in c(10, 30, 50, 100, 300, 500)) {
+  message("Power at alpha = 0.05 with n = ", N, ": ", powerN(N) * 100, "%")
+}
+
+```
+_Question_: What's the estimated power with a sample size of 37? 
+
+<details>
+  <summary>Click here for an answer</summary>
+```{r, power37}
+   message("Power at alpha = 0.05 with n = ", 37, ": ", powerN(37) * 100, "%")
+```
+</details>
+
+_Question_: How does that compare to `power.prop.test` with p1 = (neither+both)/(all),
+p2 = (CTNNB1only + DDX3Xonly)/(all), and n=37? Does this seem like and over- or under-
+estimate relative to Fisher's exact test (above)?
+
+<details>
+  <summary>Click here for an answer</summary>
+```{r, powerPropTest}
+  power.prop.test(n=37, p1=(35/37), p2=(2/37))
+```
+</details>
+
+For reasons we'll see shortly, I find the above to be a gross overestimate. 
+What about our odds ratio estimates? Do they hop around all over the place?
+Let's add a pseudocount to the shrunken odds ratio estimator to stabilize them.
+
+```{r, oddsRatios}
+
+
+# how wild are our odds ratios at a given N?
+shrinkOR <- function(n, pseudo=2) {
+  res <- sim2x2(n, neither, a, b, both) + pseudo
+  odds <- (res[1,1] * res[2,2]) / (res[1,2] * res[2,1])
+  return(odds)
+}
+
+OR0 <- function(n) replicate(1000, shrinkOR(n, pseudo=1e-6))
+
+for (N in c(10, 20, 40, 80)) {
+  hist(OR0(n=N), xlab="Estimate", main=paste("Near-raw odds ratio distribution with N =", N))
+}
+
+# And if we shrink a bit (i.e., apply a prior)?
+ORs <- function(n) replicate(1000, shrinkOR(n))
+
+for (N in c(10, 20, 40, 80)) {
+  hist(ORs(n=N), xlab="Estimate", main=paste("Shrunken odds ratio distribution with N =", N))
+}
+  
+```
+
+(Some of you may already know the log-odds ratio trick to turn the above into a bell curve.
+If not, try re-plotting the histograms above, but using the log of the OR estimates.)
+```{r}
+
+#Re-plotting wiht log of OR estimates
+
+#how wild are our odds ratios at a given N?
+shrinkORlog <- function(n, pseudo=2) {
+  res <- sim2x2(n, neither, a, b, both) + pseudo
+  odds <- log10((res[1,1] * res[2,2]) / (res[1,2] * res[2,1]))
+  return(odds)
+}
+
+# how wild are our odds ratios at a given N?
+shrinkOR <- function(n, pseudo=2) {
+  res <- sim2x2(n, neither, a, b, both) + pseudo
+  odds <- (res[1,1] * res[2,2]) / (res[1,2] * res[2,1])
+  return(odds)
+}
+
+OR0log <-function(n) replicate(1000, shrinkOR(n, pseudo=1e-6))
+
+for (N in c(10, 20, 40, 80)) {
+  hist(OR0log(n=N), xlab="Estimate", main=paste("Near-raw odds ratio distribution with N =", N))
+}
+
+# And if we shrink a bit (i.e., apply a prior)?
+ORslog <- function(n) replicate(1000, shrinkORlog(n))
+
+for (N in c(10, 20, 40, 80)) {
+  hist(ORslog(n=N), xlab="Estimate", main=paste("Shrunken odds ratio distribution with N =", N))
+}
+  
+
+
+
+```
+
+The tails of the estimates are pretty long, but the mass concentrates quickly near the true
+parameter estimate. (This is also why resampling approaches can help stabilize estimates:
+if you have enough data to estimate a parameter, resampling can also estimate how fragile 
+your estimates are, and therefore how trustworthy they are. That's why we bootstrap.) 
+
+Low p = TP53 and NF2
+NYU Study!
+
+```{r, probabilities}
+
+neither <- nrow(subset(NYU_muts, TP53 == 0 & NF2 == 0))
+TP53 <- nrow(subset(NYU_muts, TP53 == 1 & NF2 == 0))
+NF2 <- nrow(subset(NYU_muts, TP53 == 0 & NF2 == 1))
+both <- nrow(subset(NYU_muts, TP53 == 1 & NF2 == 1))
+
+```
+
+Now we have all we really need to simulate. Formally, we will model it like so.
+
+* For each sample, we simulate the occurrence of _one_ mutation.
+* If a sample has _one_ mutation, we simulate which one (CTNNB1 or DDX3X).
+* If a sample has fewer or more than _one_ mutation, we simulate which.
+
+We can do this repeatedly to estimate the distribution of test
+statistics to expect if we run this experiment quite a few times,
+with both smaller and larger total sample sizes. We're assuming that
+the dependency structure is fairly stable (is this reasonable?). 
+
+The `Beta(a, b)` distribution above is continuous between 0 and 1, and its shape depends
+on the values of `a` and `b`. For example, we can plot each of the above using the 
+St. Jude's-derived values to get a feel for how "mushy" our guesses are given
+the number of samples in the St Jude PCGP study. Effectively, we propagate our 
+underlying uncertainty about parameters by drawing them from a sensible generator,
+and that sensible generator is a beta distribution reflecting our sample size. 
+
+```{r, betas}
+
+a <- TP53
+b <- NF2
+
+p_one <- function(x) dbeta(x, (a + b), (both + neither))
+p_both <- function(x) dbeta(x, both, (a + b + neither))
+p_both_if_not_one <- function(x) dbeta(x,  both, neither)
+
+plot(p_one, main="Pr(A|B & !(A & B))")
+plot(p_both, main="Pr(A & B)")
+plot(p_both_if_not_one, main="Pr( (A & B) | (A + B != 1))")
+
+```
+
+Now for `n` samples, we can simulate appropriately "noisy" 2x2 tables with that many subjects.
+
+```{r, simulate2x2}
+
+sim2x2 <- function(n, neither, a, b, both) {
+
+  p_one <- rbeta(1, (a + b), (both + neither))
+  p_both <- rbeta(1, both, neither)
+  p_a <- rbeta(1, a, b)
+  
+  n_a_b <- rbinom(1, n, p_one)
+  n_neither_both <- n - n_a_b
+  n_both <- rbinom(1, n_neither_both, p_both)
+  n_neither <- n_neither_both - n_both
+  n_a <- rbinom(1, n_a_b, p_a)
+  n_b <- n_a_b - n_a
+
+  as.table(matrix(c(n_neither, n_a, n_b, n_both), nrow=2))
+  
+}
+
+```
+
+Let's give it a shot.
+
+```{r, someSims}
+
+a <- TP53
+b <- NF2 
 
 sim2x2(n=nrow(muts), neither, a, b, both)
 ```
@@ -629,11 +884,14 @@ if you have enough data to estimate a parameter, resampling can also estimate ho
 your estimates are, and therefore how trustworthy they are. That's why we bootstrap.) 
 
 
+
+
+
 # Thoughts and questions
 
 * Run `with(muts, table(CTNNB1, DDX3X)) %>% fisher.test`.  What does the 95% CI represent?
 ```{r}
-with(muts, table(CTNNB1, DDX3X)) %>% fisher.test
+with(muts, table(TP53, NF2)) %>% fisher.test
 ```
 
 
