@@ -43,6 +43,10 @@ object to manage cBioPortal queries.
 <details>
   <summary>Load required libraries</summary>
 ```{r, loadLibraries}
+install.packages("cgdsr")
+install.packages("kableExtra")
+install.packages("pheatmap")
+install.packages("janitor")
 
 library(cgdsr)
 library(tidyverse)
@@ -71,32 +75,31 @@ glimpse(studies)
 
 Much better.  It looks like there are 333 studies to choose from at the moment.
 
-## Fetching medulloblastoma studies 
+###############################################################################
+###############################################################################
 
-Let's narrow our field down to the ones that involve medulloblastoma. When we
-loaded the `tidyverse` package, it also loaded `stringr`, which gives us a way
-to filter data frames or tibbles based on whether a column matches a string. 
+Starting my notes & changes -RW
+
+## Fetching mesothelioma studies 
+
+Let's narrow our field down to the ones that involve mesothelioma.
 
 ```{r, medulloStudies}
 
 getCancerStudies(mycgds) %>% 
-  filter(str_detect(name, "Medulloblastoma")) %>% 
+  filter(str_detect(name, "Mesothelioma")) %>% 
   select(cancer_study_id, name) %>% 
   kbl() %>% 
   kable_styling(bootstrap_options = c("striped", "hover"))
 
 ```
 
-It would be nice to find out how many samples are in each study. It turns out that
-this can be found in the `description` column via a bit of chicanery (i.e., throwing
-out anything in the description that isn't a number).  No guarantees that this will 
-always work for other studies -- use this at your own risk!  As a bonus, let's order
-the studies from smallest to largest.
+Finding the Sample Size of these two studies... by reporting numbers in the description column
 
 ```{r, studySizes}
 
 getCancerStudies(mycgds) %>% 
-  filter(str_detect(name, "Medulloblastoma")) %>% 
+  filter(str_detect(name, "Mesothelioma")) %>% 
   mutate(n = as.integer(str_extract(description, "[0-9]+"))) %>% 
   select(cancer_study_id, n, name) %>% 
   arrange(n) %>% 
@@ -105,34 +108,49 @@ getCancerStudies(mycgds) %>%
 
 ```
 
-This is encouraging. The Hovestadt paper I mentioned above (where the DKFZ folks
-looked at single-cell data from human and mouse) is a follow-up to one with 491
-cases! (Most of the time, the Germans have the most samples. The big exception
-to this is TARGET liquid tumors: we take pride in dwarfing their cohorts.)
+The 2016 value is a bit suspect to me.. now will be attempting to find n
+
+```{r}
+Mesothelioma <- subset(studies, cancer_study_id == "meso_tcga_pan_can_atlas_2018" | cancer_study_id == "meso_tcga"| cancer_study_id == "plmeso_nyu_2015")
+
+print(Mesothelioma$description)
+```
+
+This also was not helpful! Just went straight to the website cbioportal.org to find these three studies
+```{r}
+
+```
+
+meso_tcga, n=87
+meso_tcga_pan_can_atlas_2018, n=87
+plmeso_nyu_2015, n=22
+
+"meso_tcga" and "meso_tcga_pan_can_atlas_2018" are likely the same samples?
+
 
 ## Fetching case lists to collate mutations and other aberrations 
 
-For the sake of simplicity, let's start with the Pediatric Cancer Genome Project (PCGP)
-medulloblastoma study and its 37 subjects. `getCaseLists(CGDS, cancerStudy)` does that:
+
+Starting with the meso_tcga study! n=87
 
 ```{r, getMutationData}
 
-mbl_study <- "mbl_pcgp"
+meso_tcga <- "meso_tcga"
 
 # the IDs of the cases in the PCGP MBL study
-getCaseLists(mycgds, cancerStudy=mbl_study) %>% 
+getCaseLists(mycgds, cancerStudy="meso_tcga") %>% 
   filter(case_list_name == "Samples with mutation data") ->
-    mbl_caselists
+    tcga_caselists
 
 
 # grab the list of lesions
-getGeneticProfiles(mycgds, mbl_study) %>% 
+getGeneticProfiles(mycgds, meso_tcga) %>% 
   filter(genetic_profile_name == "Mutations") %>% 
   pull(genetic_profile_id) ->
-    mbl_mutations_profile
+    tcga_mutations_profile
 
-# a few "greatest hits" mutations seen in MBL
-mbl_genes <- c("CTNNB1", "DDX3X", "FAP", "SF3B1", "IFIT3", "TP53")
+# a few "greatest hits" mutations seen in Mesothelioma, as per google
+meso_genes <- c("BAP1", "NF2", "CDKN2A", "CDKN2B", "TP53")
 
 # get the mutations data and tidy it up
 get_muts <- function(x, genes, ...) {
@@ -150,9 +168,9 @@ get_muts <- function(x, genes, ...) {
 
 # We throw out the nature of the mutation here, which is rarely a wise idea (if ever)
 muts <- get_muts(mycgds, 
-                 mbl_genes, 
-                 geneticProfiles=mbl_mutations_profile, 
-                 caseList=mbl_caselists$case_list_id)
+                 meso_genes, 
+                 geneticProfiles=tcga_mutations_profile, 
+                 caseList=tcga_caselists$case_list_id)
 
 muts %>% 
   filter(rowSums(.) > 0) %>%
@@ -162,13 +180,9 @@ muts %>%
 
 ```
 
-That's rather a lot to digest even if we do toss out the cases without detected
-mutations.  Perhaps we'd be well served by plotting the data instead. 
-
 
 ## Plotting (some of) the results from our query
 
-You can also embed plots, for example a sort-of-oncoprint of this study:
 
 ```{r, oncoprint, echo=FALSE}
 
@@ -178,188 +192,199 @@ pheatmap(t(data.matrix(muts)), col=c("white", "darkred"), cluster_rows=FALSE,
          clustering_distance_cols="manhattan", clustering_method="ward.D2", legend=FALSE)
 
 ```
+Looks like there is a group of TP53 mutant and TP53 non-mutants, no CDKN2A or CDKN2B mutants, and a mix of
+BAP1 and NF2 mutants in the mix.
 
-This is rather informative, in that one can often pick up patterns of mutual 
-exclusivity between groups of subjects and groups of genes. In the case of
-medulloblastoma, the WHO subgroups of the tumor are _Wnt_ (primarily driven by
-beta-catenin, aka _CTNNB1_, or _APC_ mutations), _Shh_ (primarily driven by _PTCH1_
-or sometimes structural variants), _Group 3_, and _Group 4_, where the latter don't
-have one defining class of driver mutation.  We note that in this small 2012 study,
-it is hard to tell which of the latter is which (later resolved by DNA methylation).
-(The WHO classification of medulloblastoma came about in 2016, for what it's worth.)
 
-Based on our earlier plot, we might wonder whether the beta-catenin gene and
-the _DDX3X_ X-linked helicase gene are co-mutated. We can test this similarly
-to our previous adventures in mutual exclusivity with IDH1, IDH2, TET2, and WT1:
+Are _BAP1_ and _NF2_ comutated? 
 
 ```{r, CTNNB1_and_DDX3X}
 
 message("Chi-squared p-value:", appendLF = FALSE)
 muts %>% 
-  tabyl(CTNNB1, DDX3X) %>% 
+  tabyl(BAP1, NF2) %>% 
   chisq.test(simulate.p.value = TRUE) %>% 
   getElement("p.value")
 
 message("Fisher's exact test p-value:", appendLF = FALSE)
 muts %>% 
-  tabyl(CTNNB1, DDX3X) %>% 
+  tabyl(BAP1, NF2) %>% 
   fisher.test(simulate.p.value = TRUE) %>% 
   getElement("p.value")
 
 
 ```
+p = 0.5128434, this is definitely not significant. 
+
+
+___________________________________
 # Power, sample size, and variance
 
 ## More is not better, better is better...
-
-I once spent a summer in Italy, eating much smaller meals but still feeling full.
-Italians (or Genovese, at least) are fond of reminding Americans that _di più non è meglio_;
-_meglio è meglio. ("More is not better; better is better.") And from a statistical 
-standpoint, this is usually true: a small, well-executed survey or experiment can
-beat the pants off of a huge, poorly-executed survey or experiment. (Xiao-Li Meng 
-at Harvard has dubbed this _the curse of Big Data_, although it's really more of
-a curse of crappy and/or perversely incentivized experiments). Nevertheless...
-
-## ...but more of the same is often good enough
-
-If we *can* get *more* observations and at the same time *better* observations, 
-it would be rather silly not to. Doubly so when it's free! So let's do that. 
-
-Our earlier observations of co-operating mutations seemed _highly significant_!
-And in fact they're striking in the figure (see the importance of figures?).
-But will they replicate when we look at the same genes in a bigger study? 
-(Don't peek at the Northcott paper if you can help it. It's more fun this way.)
+What about the smaller sample size study from NYU! n=22
 
 ```{r, Wnt_and_Ddx_revisited}
 
-northcott <- "mbl_dkfz_2017"
+meso_NYU <- "plmeso_nyu_2015"
 
-getCaseLists(mycgds, northcott) %>% 
+getCaseLists(mycgds,  meso_NYU) %>% 
   filter(case_list_name == "Samples with mutation data") ->
-    northcott_caselists 
+   NYU_caselists 
 
 # grab the list of lesions
-getGeneticProfiles(mycgds, northcott) %>% 
+getGeneticProfiles(mycgds, meso_NYU) %>% 
   filter(genetic_profile_name == "Mutations") %>% 
   pull(genetic_profile_id) ->
-    northcott_mutations_profile
+    NYU_mutations_profile
+
+# a few "greatest hits" mutations seen in Mesothelioma, as per google
+#This study required me to narrow down the number of genes in order to run
+meso_genes <- c("BAP1", "NF2", "TP53")
 
 # grab the mutation matrix for the genes as before
-northcott_muts <- get_muts(mycgds,      # as before
-                           mbl_genes,   # as before 
-                           northcott_mutations_profile, 
-                           northcott_caselists$case_list_id)
+NYU_muts <- get_muts(mycgds, meso_genes,
+                           NYU_mutations_profile, 
+                           NYU_caselists$case_list_id)
 
 # out of curiosity, how many of each mutation do we see here? 
-colSums(northcott_muts)
+colSums(NYU_muts)
 ```
 
-Looks like we're all set to replicate our previous results.
+The third study is the same as the TCGA one so I did not do the same analysis! 
 
+This is the code that I would have run for the NYU study...
 ```{r, replicatingResults}
-message("Chi-squared p-value (Northcott):", appendLF = FALSE)
-northcott_muts %>% 
-  tabyl(CTNNB1, DDX3X) %>% 
+message("Chi-squared p-value (NYU):", appendLF = FALSE)
+NYU_muts %>% 
+  tabyl(BAP1, NF2) %>% 
   chisq.test(simulate.p.value = TRUE) %>% 
   getElement("p.value")
 
-message("Fisher's exact test p-value (Northcott):", appendLF = FALSE)
-northcott_muts %>% 
-  tabyl(CTNNB1, DDX3X) %>% 
+message("Fisher's exact test p-value (NYU):", appendLF = FALSE)
+NYU_muts %>% 
+  tabyl(BAP1, NF2) %>% 
   fisher.test(simulate.p.value = TRUE) %>% 
   getElement("p.value")
 
 ```
+Both, once again, are non significant with a p value of around 0.5.
 
-Wow!  Looks like we've replicated our original finding!
-I'll bet this will look super cool when we plot it. 
+What about other gene associations?
+```{r}
+message("Chi-squared p-value (NYU):", appendLF = FALSE)
+NYU_muts %>% 
+  tabyl(BAP1, TP53) %>% 
+  chisq.test(simulate.p.value = TRUE) %>% 
+  getElement("p.value")
+
+message("Fisher's exact test p-value (NYU):", appendLF = FALSE)
+NYU_muts %>% 
+  tabyl(BAP1, TP53) %>% 
+  fisher.test(simulate.p.value = TRUE) %>% 
+  getElement("p.value")
+
+message("Chi-squared p-value (NYU):", appendLF = FALSE)
+NYU_muts %>% 
+  tabyl(NF2, TP53) %>% 
+  chisq.test(simulate.p.value = TRUE) %>% 
+  getElement("p.value")
+
+message("Fisher's exact test p-value (NYU):", appendLF = FALSE)
+NYU_muts %>% 
+  tabyl(NF2, TP53) %>% 
+  fisher.test(simulate.p.value = TRUE) %>% 
+  getElement("p.value")
+
+
+```
+There are no significant associations, with similar p values to the larger sample size cohort.
+
+There were significant associations between TP53 and CDKN2A/2B, but all of the CDKN2A/2B
+
 
 ```{r, anotherPlot}
 
 # let's use pheatmap again
-pheatmap(t(data.matrix(northcott_muts)), col=c("white", "darkred"), cluster_rows=FALSE,
+pheatmap(t(data.matrix(NYU_muts)), col=c("white", "darkred"), cluster_rows=FALSE,
          clustering_distance_cols="manhattan", clustering_method="ward.D2", legend=FALSE)
 
 ```
 
-Well, that looks a bit different, doesn't it?
-They're there, but maybe not as overlappy as before.
-Say... are some samples from the original PCGP?
+Are these the same study?
 
 ```{r, doubleDipping}
 
-northcott_caselists %>% 
+tcga_caselists %>% 
   pull(case_ids) %>% 
   str_split(pattern=" ") %>% 
   getElement(1) -> 
-    northcott_cases
+    tcga_cases
 
-mbl_caselists %>%
+pan_caselists %>% 
+  pull(case_ids) %>% 
+  str_split(pattern=" ") %>% 
+  getElement(1) -> 
+    pan_cases
+
+NYU_caselists %>%
   pull(case_ids) %>% 
   str_split(pattern=" ") %>% 
   getElement(1) ->
-    stjude_cases
+    NYU_cases
 
-intersect(northcott_cases, stjude_cases)
+intersect(NYU_cases, tcga_cases) # no cases found here
+intersect(tcga_cases, pan_cases) # all of these cases are the same
 
 ```
-
-Whoops.  Better drop those for the replication, eh? 
+The "pan" and tgca cases are all the same except for one patient sample.
 
 ```{r, dropCases}
 
-northcott_only <- setdiff(northcott_cases, stjude_cases)
+tcga_only <- setdiff(tcga_cases, pan_cases)
 
-northonly_muts <- get_muts(mycgds,      # as before
-                           mbl_genes,   # as before 
-                           geneticProfiles=northcott_mutations_profile,
-                           cases=northcott_only)
 ```
 
-(This is a recurrent issue with cBioPortal studies -- you just have to check.)
-Is the association still statistically significant? 
+
 
 ```{r, significance}
 
-message("Chi-squared p-value (Northcott ONLY):", appendLF = FALSE)
-northonly_muts %>% 
-  tabyl(CTNNB1, DDX3X) %>% 
-  chisq.test(simulate.p.value = TRUE) %>% 
-  getElement("p.value")
 
-message("Fisher's exact test p-value (Northcott ONLY):", appendLF = FALSE)
-northonly_muts %>% 
-  tabyl(CTNNB1, DDX3X) %>% 
-  fisher.test(simulate.p.value = TRUE) %>% 
-  getElement("p.value")
 
 ```
 
-Yes it is.  But is the odds ratio for co-occurrence in the same ballpark? 
+to look at odds ratios:
 
 ```{r, oddsRatioReplication}
 
 muts %>% 
-  tabyl(CTNNB1, DDX3X) %>% 
+  tabyl(BAP1, NF2) %>% 
   fisher.test() %>% 
   getElement("estimate") -> 
-    StJ_estimate
+    tcga_estimate
 
-northonly_muts %>% 
-  tabyl(CTNNB1, DDX3X) %>% 
+NYU_muts %>% 
+  tabyl(BAP1, NF2) %>% 
   fisher.test() %>% 
   getElement("estimate") ->
-    northcott_estimate
+    NYU_estimate
 
-message("Co-occurrence odds ratio (St. Jude cases): ", round(StJ_estimate, 3))
-message("Co-occurrence odds ratio (DKFZ cases): ", round(northcott_estimate, 3))
-message("Effect size inflation, St. Jude vs. Northcott: ",
-        round(StJ_estimate / northcott_estimate), "x")
+message("Co-occurrence odds ratio (NYU cases): ", round(NYU_estimate, 3))
+message("Co-occurrence odds ratio (TCGA cases): ", round(tcga_estimate, 3))
+message("Effect size inflation, NYU vs. TCGA: ",
+        round(NYU_estimate / tgca_estimate), "x")
         
 
 ```
+Co-occurrence odds ratio (NYU cases): 4.029 (n=22)
+Co-occurrence odds ratio (TCGA cases): 1.656 (n=87)
 
-The estimate from the St. Jude's study is *ten times* as large as from Northcott's. 
+
+The results replicated, but the odds ratio is still 4x!
+
+
+##############################################################################################
+This is the end of my edits for Mesothelioma studies
+##############################################################################################
 
 
 # The winner's curse and replication 
@@ -562,6 +587,41 @@ for (N in c(10, 20, 40, 80)) {
 
 (Some of you may already know the log-odds ratio trick to turn the above into a bell curve.
 If not, try re-plotting the histograms above, but using the log of the OR estimates.)
+```{r}
+
+#Re-plotting wiht log of OR estimates
+
+#how wild are our odds ratios at a given N?
+shrinkORlog <- function(n, pseudo=2) {
+  res <- sim2x2(n, neither, a, b, both) + pseudo
+  odds <- log10((res[1,1] * res[2,2]) / (res[1,2] * res[2,1]))
+  return(odds)
+}
+
+# how wild are our odds ratios at a given N?
+shrinkOR <- function(n, pseudo=2) {
+  res <- sim2x2(n, neither, a, b, both) + pseudo
+  odds <- (res[1,1] * res[2,2]) / (res[1,2] * res[2,1])
+  return(odds)
+}
+
+OR0log <-function(n) replicate(1000, shrinkOR(n, pseudo=1e-6))
+
+for (N in c(10, 20, 40, 80)) {
+  hist(OR0log(n=N), xlab="Estimate", main=paste("Near-raw odds ratio distribution with N =", N))
+}
+
+# And if we shrink a bit (i.e., apply a prior)?
+ORslog <- function(n) replicate(1000, shrinkORlog(n))
+
+for (N in c(10, 20, 40, 80)) {
+  hist(ORslog(n=N), xlab="Estimate", main=paste("Shrunken odds ratio distribution with N =", N))
+}
+  
+
+
+
+```
 
 The tails of the estimates are pretty long, but the mass concentrates quickly near the true
 parameter estimate. (This is also why resampling approaches can help stabilize estimates:
@@ -572,9 +632,17 @@ your estimates are, and therefore how trustworthy they are. That's why we bootst
 # Thoughts and questions
 
 * Run `with(muts, table(CTNNB1, DDX3X)) %>% fisher.test`.  What does the 95% CI represent?
+```{r}
+with(muts, table(CTNNB1, DDX3X)) %>% fisher.test
+```
+
 
 * Fisher's exact test is a special case of hypergeometric testing. What others exist? 
 What are these tests typically used for, and what assumptions are made regarding categories?
+
+Barnard's double-binomial test. For 2x2 contingency tables
+Boschloo's hypergeometric text. For 2x2 contingency tables, uses Fisher as test statistic
+
 
 * What happens if you test multiple hypotheses, or apply multiple tests of the same?
 
